@@ -39,9 +39,33 @@ export default function HelpCenter() {
       </footer>
 
       {/* 3. Embedded Service Script Placeholder */}
-      <Script 
-        src="https://YOUR_SALESFORCE_ORG_URL/embeddedservice/5.0/esw.min.js"
+      <Script id="init-embedded-messaging" strategy="afterInteractive">
+        {`
+          function initEmbeddedMessaging() {
+            try {
+              embeddedservice_bootstrap.settings.language = 'en_US';
+              embeddedservice_bootstrap.init(
+                '00Dfj00000PdIGR',
+                'Vercel_Messaging_Setting',
+                'https://orgfarm-c5b136d6cc-dev-ed.develop.my.site.com/ESWVercelMessagingSetti1779884138565',
+                {
+                  scrt2URL: 'https://orgfarm-c5b136d6cc-dev-ed.develop.my.salesforce-scrt.com'
+                }
+              );
+            } catch (err) {
+              console.error('Error loading Embedded Messaging: ', err);
+            }
+          }
+        `}
+      </Script>
+      <Script
+        src="https://orgfarm-c5b136d6cc-dev-ed.develop.my.site.com/ESWVercelMessagingSetti1779884138565/assets/js/bootstrap.min.js"
         strategy="afterInteractive"
+        onLoad={() => {
+          if (typeof window !== 'undefined' && typeof (window as any).initEmbeddedMessaging === 'function') {
+            (window as any).initEmbeddedMessaging();
+          }
+        }}
       />
     </div>
   );
