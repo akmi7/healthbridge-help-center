@@ -1,0 +1,41 @@
+public class hb_HealthBridgeLabResultsAction {
+
+    public class FlowInput {
+        @InvocableVariable(required=true description='The secure alphanumeric Patient ID string')
+        public String patientId;
+    }
+
+    public class FlowOutput {
+        @InvocableVariable(description='JSON payload containing HIPAA-safe diagnostic test logs')
+        public String jsonResult;
+    }
+
+    @InvocableMethod(label='Get Patient Lab Results via MCP' description='Queries the external HealthBridge MCP server wrapper securely by Patient ID.')
+    public static List<FlowOutput> getLabResults(List<FlowInput> inputs) {
+        List<FlowOutput> outputs = new List<FlowOutput>();
+        
+        for (FlowInput input : inputs) {
+            FlowOutput out = new FlowOutput();
+            Http http = new Http();
+            HttpRequest request = new HttpRequest();
+            
+            request.setEndpoint('callout:HealthBridge_MCP_Server/tools/get_lab_results?patient_id=' + EncodingUtil.urlEncode(input.patientId, 'UTF-8'));
+            request.setMethod('GET');
+            request.setHeader('Content-Type', 'application/json');
+            request.setHeader('Authorization', 'Bearer HB-Secure-Secret-2026');
+            
+            try {
+                HttpResponse response = http.send(request);
+                if (response.getStatusCode() == 200) {
+                    out.jsonResult = response.getBody();
+                } else {
+                    out.jsonResult = '{"error": "Records unavailable. Server code: ' + response.getStatusCode() + '"}';
+                }
+            } catch(Exception e) {
+                out.jsonResult = '{"error": "Callout exception: ' + e.getMessage() + '"}';
+            }
+            outputs.add(out);
+        }
+        return outputs;
+    }
+}
