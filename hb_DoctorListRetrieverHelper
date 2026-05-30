@@ -1,0 +1,128 @@
+public class hb_DoctorListRetrieverHelper {
+
+    // Define explicit properties for the Agent to fill from the chat context
+    public class SearchInput {
+        @InvocableVariable(required=true description='The semantic search term, e.g., doctor, specialist, physician')
+        public String searchPhrase;
+        
+        @InvocableVariable(required=false description='Optional specific city name extracted from user prompt')
+        public String city;
+        
+        @InvocableVariable(required=false description='Optional medical specialty extracted from user prompt')
+        public String specialty;
+
+        @InvocableVariable(required=false description='Optional maximum fee constraint, e.g., 200')
+        public Integer maxFee;
+    }
+
+    public class SearchResult { 
+        @InvocableVariable public String doctorName;
+        @InvocableVariable public String specialty;
+        @InvocableVariable public String city;
+        @InvocableVariable public String feeRange;
+        @InvocableVariable public Double matchScore;
+    }
+
+    @InvocableMethod(label='Doctor Search' description='Queries Data Cloud with dynamic runtime metadata filters.')
+    public static List<List<SearchResult>> executeSearch(List<SearchInput> inputs) {
+         List<List<Object>> cdpDataRows = new List<List<Object>>();
+        List<List<SearchResult>> bulkOutputs = new List<List<SearchResult>>();
+
+        for (SearchInput input : inputs) {
+            List<SearchResult> searchResultsList = new List<SearchResult>();
+            
+            // 1. Build the dynamic third-argument filter clause based on what fields are present
+            List<String> operationalFilters = new List<String>();
+            
+            if (String.isNotBlank(input.city)) {
+                operationalFilters.add('city__c = \'\' ' + String.escapeSingleQuotes(input.city) + ' \'\'');
+            }
+            if (String.isNotBlank(input.specialty)) {
+                operationalFilters.add('specialty__c = \'\' ' + String.escapeSingleQuotes(input.specialty) + ' \'\'');
+            }
+            // Add fee parsing logic (Assuming fees are indexed or map to a text/numeric pattern)
+            if (input.maxFee != null) {
+                // If fees are stored as string arrays/ranges like your debug log "$100-$190", 
+                // you would target the corresponding column. Assuming a numeric column here for example:
+                // operationalFilters.add('consultation_fee__c <= ' + input.maxFee);
+            }
+
+            // Combine separate parameters using standard SQL AND joining rules
+            String rawFilterArgument = '';
+            if (!operationalFilters.isEmpty()) {
+                rawFilterArgument = String.join(operationalFilters, ' AND ');
+            }
+
+            String cleanPhrase = input.city + input.specialty + 'doctor';
+
+            // 2. Assemble the dynamic hybrid search statement
+            String sqlQuery = 'SELECT * ' +
+                               'FROM hybrid_search(' +
+                               'TABLE(HealthBridge_Provider_Dir_Hyb_index__dlm), ' + 
+                               '\'' + cleanPhrase + '\', ' +
+                                '\'\', ' + 
+                               '5) ' +
+                               'ORDER BY hybrid_score__c DESC';
+
+            ConnectApi.CdpQueryInput queryInput = new ConnectApi.CdpQueryInput();
+            queryInput.sql = sqlQuery;
+
+            
+            try {
+                ConnectApi.CdpQueryOutputV2 queryOutput = ConnectApi.CdpQuery.queryAnsiSqlV2(queryInput, 'default');
+                System.debug('queryOutput: ' + queryOutput.data);
+               if (queryOutput != null && queryOutput.data != null && queryOutput.metadata != null) {
+                    
+                    // FIX: Explicitly parse out the Metadata JSON map layout structure
+                    Map<String, Integer> colPositions = new Map<String, Integer>();
+                    
+                    // Serialize then deserialize the metadata wrapper to read its dynamic properties
+                    String metadataJson = JSON.serialize(queryOutput.metadata);
+                    Map<String, Object> rawMetaMap = (Map<String, Object>) JSON.deserializeUntyped(metadataJson);
+                    
+                    for (String columnName : rawMetaMap.keySet()) {
+                        Map<String, Object> columnDetails = (Map<String, Object>) rawMetaMap.get(columnName);
+                        if (columnDetails != null && columnDetails.containsKey('placeInOrder')) {
+                            // Extract the exact index order number (adjusted from 1-based index to 0-based index)
+                            Integer placeValue = Integer.valueOf(columnDetails.get('placeInOrder'));
+                            colPositions.put(columnName.toLowerCase(), placeValue);
+                        }
+                    }
+     System.debug('colPositions : '+JSON.serializePretty(colPositions));
+                    // Loop through data using the dynamically built position map
+                    for (Object dynamicRow : queryOutput.data) {
+                        ConnectApi.CdpQueryV2Row row = (ConnectApi.CdpQueryV2Row) dynamicRow;
+                        
+                        if (row.rowData != null) {
+                            SearchResult record = new SearchResult();
+                            
+                            // Map values dynamically using field names based on your screenshot's metadata keys
+                            if (colPositions.containsKey('name__c')) {
+                                record.doctorName = String.valueOf(row.rowData[colPositions.get('name__c')]);
+                            }
+                            if (colPositions.containsKey('specialty__c')) {
+                                record.specialty = String.valueOf(row.rowData[colPositions.get('specialty__c')]);
+                            }
+                            if (colPositions.containsKey('city__c')) {
+                                record.city = String.valueOf(row.rowData[colPositions.get('city__c')]);
+                            }
+                            if (colPositions.containsKey('fee_range__c')) { // Extracted from "fee_range__c" key in your image
+                                record.feeRange = String.valueOf(row.rowData[colPositions.get('fee_range__c')]);
+                            }
+                            if (colPositions.containsKey('hybrid_score__c')) {
+                                record.matchScore = Double.valueOf(row.rowData[colPositions.get('hybrid_score__c')]);
+                            }
+                            System.debug('record : '+ JSON.serializePretty(record));
+                            searchResultsList.add(record);
+                        }
+                    }
+                  }
+            } catch (Exception ex) {
+                System.debug('Data Cloud Query Exception: ' + ex.getMessage());
+            }
+            System.debug('record : '+ JSON.serializePretty(searchResultsList));
+            bulkOutputs.add(searchResultsList);
+        }
+        return bulkOutputs;
+    }
+}
